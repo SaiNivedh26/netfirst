@@ -5,6 +5,10 @@ from typing import Literal
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
+
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -16,8 +20,21 @@ from .models import AgentRun, Client, Invoice, LedgerEntry, Proposal, engine, ge
 from .rates import get_overrides, set_override
 
 app = FastAPI(title="NetFirst")
-app.add_middleware(CORSMiddleware, allow_origins=env.list("WEB_ORIGIN"), allow_methods=["*"], allow_headers=["*"])
+_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+try:
+    _origins = env.list("WEB_ORIGIN")
+except RuntimeError:
+    pass
+app.add_middleware(CORSMiddleware, allow_origins=_origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 init_db()
+
+_static = Path(__file__).parent.parent / "static"
+if _static.exists():
+    app.mount("/static", StaticFiles(directory=str(_static)), name="static")
+
+@app.get("/", include_in_schema=False)
+def index():
+    return FileResponse(str(_static / "index.html"))
 
 
 def db():
@@ -40,6 +57,11 @@ async def start_run(file: UploadFile = File(...), output_currency: str | None = 
     if output_currency and not is_currency(output_currency):
         raise HTTPException(400, f"{output_currency} is not an ISO 4217 code")
     return {"id": agent.start(file.filename or "invoice.pdf", await file.read(), output_currency)}
+
+
+@app.get("/api/agent/runs")
+def list_runs(s: Session = Depends(db)):
+    return [r.model_dump() for r in s.exec(select(AgentRun).order_by(AgentRun.created_at.desc()).limit(50)).all()]
 
 
 @app.get("/api/agent/runs/{run_id}")
@@ -137,6 +159,19 @@ def add_client(body: NewClient, s: Session = Depends(db)):
 def client_invoices(client_id: str, s: Session = Depends(db)):
     rows = []
     for i in s.exec(select(Invoice).where(Invoice.client_id == client_id).order_by(Invoice.created_at.desc())).all():
+        swing = s.exec(select(LedgerEntry).where(LedgerEntry.invoice_id == i.id, LedgerEntry.type == "TRUE_UP")).first()
+        rows.append(i.model_dump() | {
+            "source": money(i.source_minor, i.source_currency), "total": money(i.output_base_minor - i.discount_minor + i.fx_line_minor, i.output_currency),
+            "fx_line": money(i.fx_line_minor, i.output_currency), "true_up": money(swing.amount_minor, i.base_currency) if swing else None,
+            "demo_rate": i.rate_paid_source == "DEMO_OVERRIDE",
+        })
+    return rows
+
+
+@app.get("/api/invoices")
+def list_invoices(s: Session = Depends(db)):
+    rows = []
+    for i in s.exec(select(Invoice).order_by(Invoice.created_at.desc())).all():
         swing = s.exec(select(LedgerEntry).where(LedgerEntry.invoice_id == i.id, LedgerEntry.type == "TRUE_UP")).first()
         rows.append(i.model_dump() | {
             "source": money(i.source_minor, i.source_currency), "total": money(i.output_base_minor - i.discount_minor + i.fx_line_minor, i.output_currency),

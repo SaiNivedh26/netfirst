@@ -1,4 +1,5 @@
-"""Rate sources: demo override (payment day only) -> PayPal quote (added after the sandbox smoke test) -> ECB."""
+"""Rate sources: demo override (payment day only) -> PayPal FX quote -> ECB fallback."""
+import logging
 import re
 import time
 from datetime import date
@@ -9,6 +10,8 @@ import httpx
 
 from .config import env
 from .fx import D, cross_rate
+
+log = logging.getLogger(__name__)
 
 
 class Quote(NamedTuple):
@@ -55,8 +58,33 @@ def _ecb_days() -> list[dict]:
     return _cache["days"]
 
 
+def _paypal_quote(frm: str, to: str) -> Quote:
+    """Call PayPal /v2/pricing/quote-exchange-rates. Raises on any error so caller falls back to ECB."""
+    # Import here to avoid module-level circularity (paypal imports fx, not rates).
+    from .paypal import call, PayPalError  # noqa: PLC0415
+    try:
+        body = {"quote_items": [{"base_currency": frm, "quote_currency": to}]}
+        resp = call("POST", "/v2/pricing/quote-exchange-rates", body)
+        # Response shape: { exchange_rate_quotes: [{ exchange_rate: "1.234", fx_id, expiry_time }] }
+        items = resp.get("exchange_rate_quotes") or []
+        item = items[0] if items else {}
+        rate_str = item.get("exchange_rate")
+        if not rate_str:
+            raise ValueError(f"Unexpected PayPal FX response shape: {resp}")
+        return Quote(_sig(D(rate_str)), "PAYPAL", date.today().isoformat())
+    except PayPalError as exc:
+        raise ValueError(str(exc)) from exc
+
+
 def quote(frm: str, to: str) -> Quote:
-    return rate_on(_ecb_days(), frm, to)
+    """Return best available rate: PayPal live quote first, ECB as fallback."""
+    try:
+        q = _paypal_quote(frm, to)
+        log.debug("PayPal FX quote %s->%s = %s", frm, to, q.rate)
+        return q
+    except Exception as exc:
+        log.warning("PayPal FX quote failed (%s), falling back to ECB", exc)
+        return rate_on(_ecb_days(), frm, to)
 
 
 # Demo-only and labelled: overrides the payment-day output->base rate for one output currency.

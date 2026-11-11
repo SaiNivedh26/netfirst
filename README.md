@@ -15,10 +15,11 @@ Cross-border PayPal payments quietly lose about 7–9% to the receiving fee and 
 | Invoice agent (PDF → PayPal draft) | ✅ Working against the PayPal sandbox and Groq, tested on real invoice PDFs |
 | FX engine, ledger, true-up, settlement rules | ✅ Built and unit-tested |
 | PayPal Invoicing v2 (draft, send, payer link) | ✅ Verified in sandbox for GBP, EUR and JPY |
-| PayPal Currency Exchange quote | ⚠️ Not provisioned on our sandbox account (`FEATURE_NOT_PROVISIONED`); ECB rates are used and labelled |
+| PayPal Currency Exchange quote | ✅ Live — `POST /v2/pricing/quote-exchange-rates` with ECB as silent fallback |
 | Paid webhook → true-up | ✅ Built and tested with a replayed event; live webhook needs a public URL (use the `/sync` fallback locally) |
+| Next.js enterprise UI | ✅ Dashboard, invoice upload, clients, proposals, agent run timeline |
+| AG Grid + AG Studio console | ✅ FX Intelligence report page wired to live NetFirst data |
 | Settlement agent, payment follow-up agent, ask-the-ledger | 🔜 Planned (see [Where the AI goes next](#where-the-ai-goes-next)) |
-| React + AG Grid console | 🔜 Planned |
 
 ---
 
@@ -26,7 +27,7 @@ Cross-border PayPal payments quietly lose about 7–9% to the receiving fee and 
 
 1. **Upload** your usual invoice PDF, made in any tool, priced in any currency.
 2. **The agent reads it**, validates the fields, matches or creates the client, and asks one question if something essential (like the client's email) is missing.
-3. **It prices the invoice** in the client's currency through the FX engine: the work amount plus an "FX and processing" line covering PayPal's fee and conversion spread.
+3. **It prices the invoice** in the client's currency through the FX engine: the work amount plus an "FX and processing" line covering PayPal's fee and conversion spread. The rate comes from PayPal's live Currency Exchange quote API, with ECB reference rates as a fallback.
 4. **It picks a treatment** for future rate swings and writes a one-line reason the client can read.
 5. **It creates a PayPal draft.** Nothing is sent until you click approve.
 6. **When the client pays**, NetFirst records the payment-day rate and posts the gain or loss to that client's running FX balance. Balances settle on one PayPal invoice when they reach a cap, get too old, or at quarter end; a negative balance becomes a discount on the next invoice.
@@ -89,14 +90,20 @@ Today the agent follows a fixed sequence and mostly works up to the draft. The n
 |---|---|
 | Invoicing v2 | Drafts with the FX line, send, payer link, discounts for credits, settlement invoices |
 | Webhooks | `INVOICING.INVOICE.PAID` triggers the payment-day true-up (signature verified) |
-| Currency Exchange quote | Intended rate source; not provisioned on our sandbox account, so ECB reference rates are used and labelled on every invoice |
+| Currency Exchange quote | **Primary rate source** — `POST /v2/pricing/quote-exchange-rates` returns a locked rate with `fx_id` and `expiry_time`; ECB reference rates are the fallback and are labelled on the invoice |
 | Payouts (stretch) | Paying the net amount when the user owes a client |
 
 ---
 
 ## Stack
 
-Python 3.13 · FastAPI · SQLModel + SQLite · agno + Groq · pypdf · Babel (ISO currency precision) · httpx · pytest · managed with [uv](https://docs.astral.sh/uv/).
+| Layer | Tech |
+|---|---|
+| Agent | Python 3.13, [agno](https://github.com/agno-agi/agno), Groq |
+| API | FastAPI, SQLModel + SQLite, httpx, pypdf, Babel |
+| Package manager | [uv](https://docs.astral.sh/uv/) |
+| Web UI | Next.js 15 (App Router), shadcn/ui, Tailwind CSS v4, SWR |
+| Analytics console | AG Grid Community + AG Studio, Next.js 15 |
 
 ```
 netfirst/
@@ -105,7 +112,7 @@ netfirst/
     app/
       config.py         env access; fails loudly on missing keys
       fx.py             FX engine: the only money arithmetic (Decimal, half-up, minor units)
-      rates.py          ECB rates, labelled demo override for the payment day
+      rates.py          PayPal FX quote (primary) → ECB fallback → demo override
       paypal.py         OAuth, Invoicing v2 payloads, webhook verification
       ledger.py         posting rules, guardrails, settle proposals, paid handler
       agent.py          agno + Groq invoice agent and its tools
@@ -113,6 +120,13 @@ netfirst/
       main.py           FastAPI routes
     scripts/smoke.py    sandbox smoke test
     tests/              pytest suite
+  web/                  Next.js 15 enterprise UI
+
+hackathon-paypal-ag-grid-boilerplate/
+  lib/netfirst-data.ts  fetches NetFirst API, normalises to AG Grid rows
+  lib/dashboard-data.ts merges PayPal + NetFirst data for AG Studio
+  app/dashboard/studio/ AG Studio data sources, relationships, FX Intelligence report
+  app/(endpoints)/      per-entity AG Grid pages (invoices, clients, proposals)
 ```
 
 Amounts are integers in each currency's minor units (JPY 0 decimals, KWD 3); balances are always derived from an append-only ledger.
@@ -125,9 +139,10 @@ Amounts are integers in each currency's minor units (JPY 0 decimals, KWD 3); bal
 
 At [developer.paypal.com](https://developer.paypal.com), with **Sandbox** selected:
 
-1. **Testing Tools → Sandbox Accounts → Create account**: a **Business** account in the **United States** (India business sandbox accounts are restricted).
+1. **Testing Tools → Sandbox Accounts → Create account**: a **Business** account in the **United States** (India business sandbox accounts are restricted for Payouts).
 2. **Create account** again: a **Personal** account in the **United Kingdom** (the paying client). Note its email and password from *View/edit account*.
 3. **Apps & Credentials → Create App**: type **Merchant**, linked to the US business account, with **Invoicing** enabled under Features. Copy the Client ID and Secret.
+4. **Activate Multi-currency service** on the sandbox business account (Business Tools → Streamline Operations) to enable the PayPal Currency Exchange quote API.
 
 ### 2. Groq
 
@@ -137,30 +152,46 @@ Create an API key at [console.groq.com](https://console.groq.com).
 
 ```bash
 cp netfirst/.env.example netfirst/.env
-# fill PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, GROQ_API_KEY, SMOKE_RECIPIENT_EMAIL (the UK personal account)
+# fill PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, GROQ_API_KEY, SMOKE_RECIPIENT_EMAIL
 ```
 
 Every other value in `.env.example` is a documented default you can change: fees, spread, guardrail thresholds, client caps, model, timeouts, rate source URL, payment term.
 
-### 4. Install, test, run
+### 4. API server
 
 ```bash
 cd netfirst/api
 uv sync
 uv run pytest                       # unit + DB-backed tests, no network
-uv run python -m scripts.smoke      # checks your sandbox: OAuth, drafts in GBP/EUR/JPY, send, payer link
+uv run python -m scripts.smoke      # checks sandbox: OAuth, drafts, send, payer link
 uv run uvicorn app.main:app --reload
 ```
 
-API docs are at http://localhost:8000/docs.
+API docs at http://localhost:8000/docs.
 
-### 5. Webhooks (optional locally)
+### 5. Web UI
+
+```bash
+cd netfirst/web
+npm install
+npm run dev                         # http://localhost:3000
+```
+
+### 6. AG Grid console
+
+```bash
+cd hackathon-paypal-ag-grid-boilerplate
+npm install
+# fill .env.local: AG_STUDIO license key, PAYPAL_CLIENT_ID/SECRET, NETFIRST_API_URL=http://localhost:8000
+npm run dev                         # http://localhost:3001
+```
+
+### 7. Webhooks (optional locally)
 
 PayPal needs a public HTTPS URL:
 
 ```bash
-brew install cloudflared
-cloudflared tunnel --url http://localhost:8000
+ngrok http 8000
 ```
 
 Add a sandbox webhook on your app for `https://<tunnel>/api/webhooks/paypal` with the *Invoice paid* and *Invoice cancelled* events, and put its ID in `PAYPAL_WEBHOOK_ID`. Without a webhook, `POST /api/invoices/{id}/sync` reads the status from PayPal and posts the payment and true-up the same way.
@@ -179,6 +210,7 @@ Add a sandbox webhook on your app for `https://<tunnel>/api/webhooks/paypal` wit
 | GET | `/api/clients` | Client ledger rows with derived balances |
 | POST | `/api/clients` | Add a client |
 | GET | `/api/clients/{id}/invoices` | Invoices for one client |
+| GET | `/api/invoices` | All invoices with FX lines |
 | GET | `/api/summary` | Summary figures |
 | GET | `/api/proposals` | Open settle proposals |
 | POST | `/api/proposals/{id}/approve` · `/dismiss` | Act on a proposal |
@@ -192,9 +224,8 @@ Add a sandbox webhook on your app for `https://<tunnel>/api/webhooks/paypal` wit
 
 ## Honest limitations
 
-- **Rates:** PayPal's Currency Exchange API isn't provisioned on our sandbox account, so rates come from ECB reference rates (one mid-market rate per day, about 30 currencies) plus the configured spread. The source is stored and shown on every invoice.
-- **Demo rate override:** rates barely move during a short demo, so the payment-day rate can be overridden from the demo controls. Every invoice paid under it is stored and shown as `DEMO_OVERRIDE`. There is no seeded or fabricated history; the ledger only contains real sandbox invoices.
 - **PDFs:** Groq models don't read PDFs directly, so text is extracted with pypdf first. Scanned PDFs with no text layer are rejected.
+- **Demo rate override:** rates barely move during a short demo, so the payment-day rate can be overridden from the demo controls. Every invoice paid under it is stored and shown as `DEMO_OVERRIDE`.
 - **Sandbox:** invoice emails may not arrive; open the payer link directly while logged in as the sandbox personal account.
 - **Database:** SQLite with `create_all`, no migrations; delete `netfirst.db` after a schema change.
 

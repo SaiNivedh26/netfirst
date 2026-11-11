@@ -54,6 +54,7 @@ def invoice_payload(
     term = {"term_type": "DUE_ON_DATE_SPECIFIED", "due_date": due_date.date().isoformat()} if due_date else {"term_type": env.PAYPAL_PAYMENT_TERM}
     payload = {
         "detail": {"currency_code": currency, "note": note, "payment_term": term} | ({"invoice_number": invoice_number} if invoice_number else {}),
+        "invoicer": {},
         "primary_recipients": [{"billing_info": {"email_address": email}}],
         "items": [{"name": name, "quantity": "1", "unit_amount": money(minor)} for name, minor in items if minor > 0],
     }

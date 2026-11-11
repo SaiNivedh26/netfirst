@@ -330,7 +330,12 @@ def execute(run_id: str, text: str, output_currency: str | None = None, answer: 
     if output_currency:
         prompt += f"\nThe user chose {output_currency} as the output currency."
     if answer:
-        prompt += f"\nThe user answered your earlier question: {answer}"
+        prompt += (
+            f"\nThe user answered your earlier question: {answer}"
+            "\nYou have already validated the extraction and matched or created the client."
+            " Continue from where you left off: call get_client_history, price_invoice, check_policy, then create_paypal_draft."
+            " Do NOT call validate_extraction or find_client again."
+        )
     try:
         build_agent(tools, run_id).run(prompt)
         with Session(engine) as s:

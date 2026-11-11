@@ -1,2 +1,43 @@
+# Python virtualenvs
 pay/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment / secrets
 .env
+.env.local
+.env.*.local
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# Uploads (agent run PDFs)
+uploads/
+
+# Test / build artifacts
+.pytest_cache/
+dist/
+build/
+*.egg-info/
+
+# Node
+node_modules/
+.next/
+out/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+audit.log
+
+# ngrok
+*.ngrok-free.app
+
+.claude/

@@ -1,0 +1,26 @@
+[project]
+name = "netfirst-api"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "agno==3.1.12",
+    "groq==1.7.0",
+    "fastapi==0.162.4",
+    "uvicorn==0.54.0",
+    "python-multipart==0.0.33",
+    "sqlmodel==0.0.48",
+    "httpx==0.28.1",
+    "pypdf==7.0.1",
+    "babel==2.18.0",
+    "python-dotenv==1.2.4",
+]
+
+[dependency-groups]
+dev = ["pytest==9.2.0"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

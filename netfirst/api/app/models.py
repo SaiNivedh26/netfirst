@@ -3,6 +3,7 @@ Rates are stored as strings to keep them exact. Balances are always derived from
 import uuid
 from datetime import UTC, datetime
 
+from sqlalchemy import text
 from sqlmodel import Field, Session, SQLModel, create_engine
 
 from .config import env
@@ -25,6 +26,7 @@ class Client(SQLModel, table=True):
     cap_minor_base: int
     settle_by_days: int
     created_at: datetime = Field(default_factory=now)
+    demo_session_id: str | None = Field(default=None, index=True)
 
 
 class Invoice(SQLModel, table=True):
@@ -55,6 +57,7 @@ class Invoice(SQLModel, table=True):
     due_date: datetime | None = None
     paid_at: datetime | None = None
     created_at: datetime = Field(default_factory=now)
+    demo_session_id: str | None = Field(default=None, index=True)
 
 
 class LedgerEntry(SQLModel, table=True):
@@ -65,6 +68,7 @@ class LedgerEntry(SQLModel, table=True):
     amount_minor: int  # base currency; + client owes user, − user owes client
     note: str
     created_at: datetime = Field(default_factory=now)
+    demo_session_id: str | None = Field(default=None, index=True)
 
 
 class Proposal(SQLModel, table=True):
@@ -77,6 +81,7 @@ class Proposal(SQLModel, table=True):
     client_note: str = ""
     status: str = "OPEN"  # OPEN, APPROVED, DISMISSED
     created_at: datetime = Field(default_factory=now)
+    demo_session_id: str | None = Field(default=None, index=True)
 
 
 class Settings(SQLModel, table=True):
@@ -94,6 +99,12 @@ class AgentRun(SQLModel, table=True):
     steps: str = "[]"  # JSON trace for the UI
     question: str | None = None
     invoice_id: str | None = None
+    created_at: datetime = Field(default_factory=now)
+    demo_session_id: str | None = Field(default=None, index=True)
+
+
+class DemoSession(SQLModel, table=True):
+    id: str = Field(default_factory=_id, primary_key=True)  # 12-char slug
     created_at: datetime = Field(default_factory=now)
 
 
@@ -118,6 +129,14 @@ engine = create_engine(env.DATABASE_URL, connect_args={"check_same_thread": Fals
 
 def init_db() -> None:
     SQLModel.metadata.create_all(engine)
+    # Add demo_session_id column to existing tables if missing (SQLite ALTER TABLE)
+    with engine.connect() as conn:
+        for table in ["client", "invoice", "agentrun", "ledgerentry", "proposal"]:
+            try:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN demo_session_id TEXT"))
+                conn.commit()
+            except Exception:
+                pass  # column already exists
 
 
 def get_settings(s: Session) -> Settings:

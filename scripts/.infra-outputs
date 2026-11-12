@@ -1,0 +1,11 @@
+ALB_ARN=arn:aws:elasticloadbalancing:us-east-1:767397931665:loadbalancer/app/netfirst-alb/e3a9590a73e84780
+ALB_DNS=netfirst-alb-877327463.us-east-1.elb.amazonaws.com
+BACKEND_TG=arn:aws:elasticloadbalancing:us-east-1:767397931665:targetgroup/netfirst-backend-tg/9fdebd61b401dfe9
+WEB_TG=arn:aws:elasticloadbalancing:us-east-1:767397931665:targetgroup/netfirst-web-tg/ce3eeacb8ee174d5
+AGGRID_TG=arn:aws:elasticloadbalancing:us-east-1:767397931665:targetgroup/netfirst-aggrid-tg/325682a652c26972
+EFS_ID=fs-05faa6787ec2d063b
+ECS_SG=sg-02db06a06f36846ce
+ROLE_ARN=arn:aws:iam::767397931665:role/netfirst-ecs-task-role
+CF_ID=E2ASJEF380MBT0
+CF_DOMAIN=dc171pyg4k4gz.cloudfront.net
+SUBNETS_CSV=subnet-02b74011224b9069c,subnet-00b626fdd7ddcb9ae,subnet-09cb42989f599dab7

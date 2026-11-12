@@ -61,6 +61,10 @@ The agent picks the treatment from payment history. Balances over the cap become
 
 The guided demo runs four real invoices end to end, each with a step-by-step tour:
 
+https://dc171pyg4k4gz.cloudfront.net/
+
+<br>
+
 | Scenario | Client | Invoice | What you see |
 |---|---|---|---|
 | Charge | Marks & Spencer | GBP 465.82 | FX line billed upfront |
@@ -77,6 +81,11 @@ Each run goes **upload → agent works → review → send and collect → ledge
 | Invoicing v2 | Drafts with the FX line, sending, payer links, credit discounts, settlement invoices |
 | Currency Exchange | Live locked rates (`/v2/pricing/quote-exchange-rates`), ECB as fallback |
 | Webhooks | `INVOICING.INVOICE.PAID` posts the payment-day true-up |
+
+## Architecture
+
+<img width="3800" height="2240" alt="image" src="https://github.com/user-attachments/assets/714cd8a4-9029-4229-ac35-85347decad09" />
+
 
 ## Get started
 
@@ -133,3 +142,14 @@ scripts/                               AWS deployment
 ## License
 
 MIT. See [LICENSE](netfirst/LICENSE).
+
+## Team Nooglers
+
+
+
+- [@Sai Nivedh V](https://github.com/SaiNivedh26)
+- [@Baranidharan S](https://github.com/thespectacular314)
+- [@Roshan T](https://github.com/Git-Roshan09)
+- [@Hari Heman](https://github.com/MAD-MAN-HEMAN)
+
+

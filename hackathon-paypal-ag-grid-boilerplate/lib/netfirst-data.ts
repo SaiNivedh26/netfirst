@@ -1,11 +1,15 @@
+import { headers } from 'next/headers';
+
 // NetFirst data fetched from the local FastAPI backend.
 // All amounts arrive as { minor: number, currency: string, display: string }.
 // We normalise to plain numbers (major units) for AG Grid / AG Studio.
 
 const BASE = process.env.NETFIRST_API_URL ?? 'http://localhost:8000';
 
+// Forward the visitor's demo session so each viewer only sees their own sandbox data.
 async function nf<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { cache: 'no-store' });
+  const cookie = (await headers()).get('cookie') ?? '';
+  const res = await fetch(`${BASE}${path}`, { cache: 'no-store', headers: { cookie } });
   if (!res.ok) throw new Error(`NetFirst ${res.status} on ${path}`);
   return res.json() as Promise<T>;
 }
@@ -28,6 +32,7 @@ interface NfInvoice {
   id: string; invoice_number: string | null; client_id: string; status: string;
   treatment: string; source: NfMoney; total: NfMoney; fx_line: NfMoney;
   true_up: NfMoney | null; demo_rate: boolean; created_at: string; description: string;
+  paypal_invoice_id: string | null;
 }
 
 interface NfProposal {
@@ -81,6 +86,7 @@ function invoiceRows(invoices: NfInvoice[]) {
     demoRate: i.demo_rate,
     createdAt: i.created_at.slice(0, 10),
     description: i.description,
+    paypalInvoiceId: i.paypal_invoice_id,
   }));
 }
 

@@ -1,7 +1,8 @@
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"
+const BASE = process.env.NEXT_PUBLIC_API_URL ?? ""
 
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
+    credentials: "include",
     ...init,
     headers: init?.body instanceof FormData ? undefined : { "Content-Type": "application/json", ...init?.headers },
   })
@@ -80,6 +81,7 @@ export interface Invoice {
   total: Money
   fx_line: Money
   true_up: Money | null
+  rate_source: string | null
   demo_rate: boolean
   created_at: string
   description: string
@@ -91,4 +93,27 @@ export interface Proposal {
   client: string
   amount: Money
   status: string
+  reason: string
+}
+
+export interface LedgerRow {
+  id: string
+  client_id: string
+  invoice_id: string | null
+  client: string | null
+  type: "INVOICE" | "PAYMENT" | "TRUE_UP" | "FX_DEFER" | "SETTLEMENT" | "CREDIT_APPLIED"
+  note: string
+  created_at: string
+  amount: Money
+  invoice_number: string | null
+  treatment: "CHARGE" | "TRUE_UP" | "DEFER" | null
+}
+
+export interface SampleInvoice {
+  id: string
+  label: string
+  description: string
+  client: string
+  currency: string
+  amount: string
 }

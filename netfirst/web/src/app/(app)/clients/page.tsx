@@ -10,13 +10,13 @@ export default function ClientsPage() {
   const { data: clients, isLoading } = useSWR<Client[]>("/api/clients", apiFetch, { refreshInterval: 30000 })
 
   return (
-    <div className="p-6 space-y-5">
+    <div className="mx-auto max-w-6xl space-y-5 p-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight" style={{ fontFamily: "var(--font-serif)" }}>Clients</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">{clients ? `${clients.length} clients` : "Loading…"}</p>
+        <h1 className="text-3xl font-bold tracking-tight text-[#0b1f4d]" style={{ fontFamily: "var(--font-serif)" }}>Clients</h1>
+        <p className="mt-1 text-sm text-slate-600">{clients ? `${clients.length} clients` : "Loading"}</p>
       </div>
 
-      <div className="rounded-md border">
+      <div className="overflow-hidden rounded-2xl border bg-white">
         <Table>
           <TableHeader>
             <TableRow>

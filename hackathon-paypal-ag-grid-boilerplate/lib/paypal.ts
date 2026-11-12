@@ -43,10 +43,18 @@ async function accessToken(): Promise<string> {
 
 async function get<T>(path: string): Promise<T> {
   for (let attempt = 1; ; attempt++) {
-    const res = await fetch(`${BASE_URL}${path}`, {
-      headers: { Authorization: `Bearer ${await accessToken()}` },
-      cache: 'no-store',
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${BASE_URL}${path}`, {
+        headers: { Authorization: `Bearer ${await accessToken()}` },
+        cache: 'no-store',
+      });
+    } catch (e) {
+      // The sandbox intermittently drops connections; one dropped request should not fail the page.
+      if (attempt >= MAX_ATTEMPTS) throw e;
+      await new Promise((resolve) => setTimeout(resolve, 2 ** attempt * 250));
+      continue;
+    }
     if (res.ok) return (await res.json()) as T;
 
     // A revoked or expired token: drop it and mint a new one once.
@@ -179,8 +187,16 @@ export type Invoice = {
 // The list omits line items, payments and refunds; the detail endpoint has them.
 export async function listInvoices(): Promise<Invoice[]> {
   const summaries = await listAll<{ id: string }>('/v2/invoicing/invoices?total_required=true', 'items', 100);
-  return Promise.all(summaries.map((i) => get<Invoice>(`/v2/invoicing/invoices/${encodeURIComponent(i.id)}`)));
+  // One request per invoice: firing them all at once times out connecting to the sandbox.
+  const invoices: Invoice[] = [];
+  for (let i = 0; i < summaries.length; i += DETAIL_CONCURRENCY) {
+    const batch = summaries.slice(i, i + DETAIL_CONCURRENCY);
+    invoices.push(...(await Promise.all(batch.map((s) => get<Invoice>(`/v2/invoicing/invoices/${encodeURIComponent(s.id)}`)))));
+  }
+  return invoices;
 }
+
+const DETAIL_CONCURRENCY = 8;
 
 // --- Transaction Search & balances -------------------------------------------------
 

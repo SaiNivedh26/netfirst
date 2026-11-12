@@ -5,7 +5,7 @@
 // (`type: 'money'`), which keeps the formatter here on the client; date columns set the grid's
 // built-in `cellDataType: 'dateString'` ('YYYY-MM-DD') or `'dateTimeString'` ('YYYY-MM-DDThh:mm:ssZ').
 
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
 import {
   ClientSideRowModelModule,
   ColumnAutoSizeModule,
@@ -13,6 +13,9 @@ import {
   enableDevValidations,
   NumberFilterModule,
   QuickFilterModule,
+  RowApiModule,
+  RowStyleModule,
+  ScrollApiModule,
   TextFilterModule,
   themeQuartz,
   type ColDef,
@@ -20,6 +23,7 @@ import {
   type ValueFormatterParams,
 } from 'ag-grid-community';
 import { AgGridProvider, AgGridReact } from 'ag-grid-react';
+import { ScenarioBar, useScenarioFocus } from './scenario-guide';
 
 if (process.env.NODE_ENV !== 'production') {
   enableDevValidations();
@@ -34,6 +38,9 @@ const modules = [
   DateFilterModule,
   QuickFilterModule,
   ColumnAutoSizeModule,
+  RowStyleModule,
+  RowApiModule,
+  ScrollApiModule,
 ];
 
 // Same PayPal tokens as the dashboard (app/globals.css).
@@ -62,11 +69,26 @@ const columnTypes: ColTypeDefs<Row> = {
 const defaultColDef: ColDef<Row> = { filter: true };
 const autoSizeStrategy = { type: 'fitCellContents' } as const;
 
-export function DataGrid({ rows, columns }: { rows: Row[]; columns: ColDef<Row>[] }) {
+export function DataGrid(props: { rows: Row[]; columns: ColDef<Row>[] }) {
+  return (
+    <Suspense fallback={<Grid {...props} focus={null} />}>
+      <FocusedGrid {...props} />
+    </Suspense>
+  );
+}
+
+function FocusedGrid(props: { rows: Row[]; columns: ColDef<Row>[] }) {
+  const { focus } = useScenarioFocus();
+  return <Grid {...props} focus={focus} />;
+}
+
+function Grid({ rows, columns, focus }: { rows: Row[]; columns: ColDef<Row>[]; focus: string | null }) {
   const [search, setSearch] = useState('');
+  const [ready, setReady] = useState(false);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
+      {focus !== null && <ScenarioBar rows={rows} ready={ready} />}
       <input
         type="search"
         value={search}
@@ -86,6 +108,13 @@ export function DataGrid({ rows, columns }: { rows: Row[]; columns: ColDef<Row>[
             quickFilterText={search}
             autoSizeStrategy={autoSizeStrategy}
             enableCellTextSelection
+            getRowId={({ data }) => String(data.id)}
+            rowClassRules={{ 'nf-focus-row': ({ data }) => focus !== null && data?.id === focus }}
+            onFirstDataRendered={({ api }) => {
+              const node = focus ? api.getRowNode(focus) : undefined;
+              if (node) api.ensureNodeVisible(node, 'middle');
+              window.setTimeout(() => setReady(true), 300);
+            }}
           />
         </AgGridProvider>
       </div>

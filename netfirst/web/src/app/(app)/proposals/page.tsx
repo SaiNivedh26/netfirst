@@ -27,13 +27,13 @@ export default function ProposalsPage() {
   }
 
   return (
-    <div className="p-6 space-y-5">
+    <div className="mx-auto max-w-6xl space-y-5 p-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight" style={{ fontFamily: "var(--font-serif)" }}>Proposals</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">Pending FX settlement proposals</p>
+        <h1 className="text-3xl font-bold tracking-tight text-[#0b1f4d]" style={{ fontFamily: "var(--font-serif)" }}>Settlements</h1>
+        <p className="mt-1 text-sm text-slate-600">Balances over their cap, waiting for your approval</p>
       </div>
 
-      <div className="rounded-md border">
+      <div className="overflow-hidden rounded-2xl border bg-white">
         <Table>
           <TableHeader>
             <TableRow>
@@ -71,7 +71,7 @@ export default function ProposalsPage() {
                       onClick={() => settle(p.id)}
                       disabled={loading === p.id}
                     >
-                      {loading === p.id ? "Settling…" : "Settle"}
+                      {loading === p.id ? "Settling" : "Settle"}
                     </Button>
                   )}
                 </TableCell>

@@ -2,6 +2,8 @@
 import base64
 import time
 from datetime import datetime
+import random
+import string
 
 import httpx
 
@@ -34,7 +36,7 @@ def _access_token() -> str:
 
 
 # ponytail: no retries; add backoff on 429/5xx if the sandbox proves flaky.
-def call(method: str, path: str, body: dict | None = None, headers: dict | None = None) -> dict:
+def call(method: str, path: str, body: dict | list | None = None, headers: dict | None = None) -> dict:
     res = httpx.request(
         method, f"{env.PAYPAL_BASE_URL}{path}", json=body, timeout=env.int("PAYPAL_TIMEOUT_SECONDS"),
         headers={"Authorization": f"Bearer {_access_token()}", **(headers or {})},
@@ -47,24 +49,41 @@ def call(method: str, path: str, body: dict | None = None, headers: dict | None 
 def invoice_payload(
     *, currency: str, email: str, note: str, items: list[tuple[str, int]],
     discount_minor: int = 0, invoice_number: str | None = None, due_date: datetime | None = None,
+    name: str | None = None,
 ) -> dict:
     def money(minor: int) -> dict:
         return {"currency_code": currency, "value": to_major(minor, currency)}
 
     term = {"term_type": "DUE_ON_DATE_SPECIFIED", "due_date": due_date.date().isoformat()} if due_date else {"term_type": env.PAYPAL_PAYMENT_TERM}
+    billing: dict = {"email_address": email}
+    if name:
+        billing["business_name"] = name
     payload = {
         "detail": {"currency_code": currency, "note": note, "payment_term": term} | ({"invoice_number": invoice_number} if invoice_number else {}),
         "invoicer": {},
-        "primary_recipients": [{"billing_info": {"email_address": email}}],
-        "items": [{"name": name, "quantity": "1", "unit_amount": money(minor)} for name, minor in items if minor > 0],
+        "primary_recipients": [{"billing_info": billing}],
+        "items": [{"name": item_name, "quantity": "1", "unit_amount": money(minor)} for item_name, minor in items if minor > 0],
     }
     if discount_minor:
         payload["amount"] = {"breakdown": {"discount": {"invoice_discount": {"amount": money(discount_minor)}}}}
     return payload
 
 
+def _unique_suffix() -> str:
+    return "".join(random.choices(string.digits, k=4))
+
+
 def create_draft(payload: dict) -> dict:
-    return call("POST", "/v2/invoicing/invoices", payload, {"Prefer": "return=representation"})
+    try:
+        return call("POST", "/v2/invoicing/invoices", payload, {"Prefer": "return=representation"})
+    except PayPalError as e:
+        if e.status == 422 and "DUPLICATE_INVOICE_NUMBER" in e.body:
+            # Append a 4-digit suffix to make the number unique and retry once.
+            detail = payload.setdefault("detail", {})
+            base = detail.get("invoice_number") or ""
+            detail["invoice_number"] = f"{base}-{_unique_suffix()}"
+            return call("POST", "/v2/invoicing/invoices", payload, {"Prefer": "return=representation"})
+        raise
 
 
 def send_and_get_link(invoice_id: str) -> str | None:

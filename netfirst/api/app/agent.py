@@ -22,7 +22,7 @@ from sqlmodel import Session, select
 
 from . import paypal
 from .config import env
-from .fx import balance, fmt, is_currency, price_invoice, to_minor
+from .fx import balance, exp, fmt, is_currency, price_invoice, to_minor
 from .ledger import allowed_treatment, client_entries, new_client, refresh_proposals, sent_entries
 from .models import AgentRun, Client, Invoice, engine, get_settings, now
 from .rates import quote
@@ -37,8 +37,8 @@ Always follow these steps in order:
 3. If there is no match, the client's email is essential: if the PDF has none, call ask_user for it. Then call propose_client;
    the client's currency is the currency on the invoice unless the user said otherwise.
 4. Call get_client_history.
-5. Call price_invoice with the output currency (the user's choice if given, else the client's usual currency) and your treatment choice.
-   CHARGE: new or slow-paying clients. TRUE_UP: repeat clients. DEFER: loyal clients only.
+5. Call price_invoice with the output currency (the user's choice if given, else the client's usual currency) and the
+   recommended_treatment from get_client_history (the most generous treatment the client's history allows).
 6. Call check_policy for that treatment. If it downgrades, call price_invoice again with the allowed treatment.
 7. Call create_paypal_draft with a one-sentence reason for the treatment that the client could read.
 Only the client email and an unambiguous currency are essential. A missing due date is fine (the default payment term applies).
@@ -47,7 +47,7 @@ Never compute, convert or invent amounts, emails or currencies. If validate_extr
 
 class Item(BaseModel):
     name: str
-    amount: str
+    amount: str | None = None
 
 
 class Extraction(BaseModel):
@@ -77,6 +77,9 @@ class InvoiceTools(Toolkit):
         self.extraction: Extraction | None = None
         self.client_id: str | None = None
         self.priced: dict | None = None
+        with Session(engine) as s:
+            run = s.get(AgentRun, run_id)
+            self.session_id = run.demo_session_id if run else None
         super().__init__(
             name="invoice_tools",
             tools=[self.validate_extraction, self.find_client, self.propose_client, self.get_client_history,
@@ -102,11 +105,22 @@ class InvoiceTools(Toolkit):
             errors.append(f"{ex.client_email} is not an email address")
         if not errors:
             try:
-                items = sum(to_minor(i.amount.replace(",", ""), ex.currency) for i in ex.items)
-                tax = to_minor(ex.tax.replace(",", ""), ex.currency) if ex.tax else 0
-                total = to_minor(ex.total.replace(",", ""), ex.currency)
-                if items + tax != total:
-                    errors.append(f"items {fmt(items, ex.currency)} + tax {fmt(tax, ex.currency)} do not add up to the total {fmt(total, ex.currency)}")
+                # Auto-fill a single missing item amount from total - tax - other items
+                missing = [i for i in ex.items if not i.amount]
+                if len(missing) == 1:
+                    tax = to_minor(ex.tax.replace(",", ""), ex.currency) if ex.tax else 0
+                    total = to_minor(ex.total.replace(",", ""), ex.currency)
+                    known = sum(to_minor(i.amount.replace(",", ""), ex.currency) for i in ex.items if i.amount)
+                    computed = total - tax - known
+                    missing[0].amount = str(computed / (10 ** exp(ex.currency)))
+                elif len(missing) > 1:
+                    errors.append(f"{len(missing)} item amounts are missing; provide them explicitly")
+                if not errors:
+                    items = sum(to_minor(i.amount.replace(",", ""), ex.currency) for i in ex.items)
+                    tax = to_minor(ex.tax.replace(",", ""), ex.currency) if ex.tax else 0
+                    total = to_minor(ex.total.replace(",", ""), ex.currency)
+                    if items + tax != total:
+                        errors.append(f"items {fmt(items, ex.currency)} + tax {fmt(tax, ex.currency)} do not add up to the total {fmt(total, ex.currency)}")
             except ArithmeticError:
                 errors.append("an amount is not a number")
         if errors:
@@ -127,7 +141,7 @@ class InvoiceTools(Toolkit):
             email: Client email from the invoice, if any.
         """
         with Session(engine) as s:
-            clients = s.exec(select(Client)).all()
+            clients = s.exec(select(Client).where(Client.demo_session_id == self.session_id)).all()
             match = next((c for c in clients if email and c.email.lower() == email.lower()), None)
             if match is None:
                 names = {c.name.lower(): c for c in clients}
@@ -152,7 +166,7 @@ class InvoiceTools(Toolkit):
         if not is_currency(currency):
             return _out(f"{currency} is not an ISO 4217 currency code", ok=False)
         with Session(engine) as s:
-            c = new_client(s, name=name, email=email, country=country.upper(), currency=currency)
+            c = new_client(s, name=name, email=email, country=country.upper(), currency=currency, demo_session_id=self.session_id)
             self.client_id = c.id
             return _out(f"New client {c.name} paying in {currency}", ok=True, client=c.model_dump())
 
@@ -166,8 +180,11 @@ class InvoiceTools(Toolkit):
             days = [(i.paid_at - i.created_at).days for i in paid if i.paid_at]
             bal = balance(client_entries(s, c.id))
             avg = round(sum(days) / len(days)) if days else None
+            recommended, why = allowed_treatment("DEFER", len(paid), bal, c.cap_minor_base)
             return _out(
-                f"{len(paid)} paid invoices" + (f", pays in about {avg} days" if avg is not None else "") + f", FX balance {fmt(bal, base)}",
+                f"{len(paid)} paid invoices" + (f", pays in about {avg} days" if avg is not None else "") + f", FX balance {fmt(bal, base)}"
+                + f"; recommends {recommended}" + ("" if why == "allowed" else f" ({why})"),
+                recommended_treatment=recommended, recommendation_reason=why,
                 paid_invoices=len(paid), avg_days_to_pay=avg, balance=fmt(bal, base), cap=fmt(c.cap_minor_base, base),
                 pending_credit=fmt(-bal, base) if bal < 0 else None, usual_currency=c.currency,
             )
@@ -247,10 +264,11 @@ class InvoiceTools(Toolkit):
             c = s.get(Client, self.client_id)
             out = p["output"]
             inv = Invoice(
-                client_id=c.id, invoice_number=ex.invoice_number, description=", ".join(i.name for i in ex.items),
+                client_id=c.id, invoice_number=ex.invoice_number, description="Professional Services",
                 source_minor=p["source_minor"], source_currency=ex.currency, ai_reason=reason, agent_run_id=self.run_id,
                 source_file=str(_pdf_path(self.run_id)), output_base_minor=0, output_currency=out, base_currency=p["base"],
                 treatment=p["treatment"], rate_invoiced=p["rate_output_to_base"], rate_source=p["rate_source"],
+                demo_session_id=self.session_id,
                 due_date=datetime(ex.due_date.year, ex.due_date.month, ex.due_date.day, tzinfo=UTC) if ex.due_date else None,
             )
             _fill(inv, p)
@@ -279,11 +297,12 @@ class InvoiceTools(Toolkit):
 def draft_payload(inv: Invoice, c: Client, ex: Extraction) -> dict:
     """Work as one line (per-item conversion would not sum to the priced amount after rounding), then the FX line."""
     out = inv.output_currency
-    note = f"Rate used: 1 {out} = {inv.rate_invoiced} {inv.base_currency} ({inv.rate_source}, {now().date()})."
+    item_detail = " | ".join(f"{i.name} ({i.amount})" for i in ex.items if i.name)
+    note = f"{item_detail}\n\nRate used: 1 {out} = {inv.rate_invoiced} {inv.base_currency} ({inv.rate_source}, {now().date()})."
     if inv.treatment != "CHARGE":
         note += " Rate changes before payment are settled on your FX statement."
     return paypal.invoice_payload(
-        currency=out, email=c.email, note=note, invoice_number=inv.invoice_number, due_date=inv.due_date,
+        currency=out, email=c.email, name=c.name, note=note, invoice_number=inv.invoice_number, due_date=inv.due_date,
         items=[(inv.description, inv.output_base_minor), ("FX and processing", inv.fx_line_minor)], discount_minor=inv.discount_minor,
     )
 
@@ -356,10 +375,10 @@ def _pdf_path(run_id: str) -> Path:
     return Path(env.UPLOAD_DIR) / f"{run_id}.pdf"
 
 
-def start(file_name: str, data: bytes, output_currency: str | None = None) -> str:
+def start(file_name: str, data: bytes, output_currency: str | None = None, session_id: str | None = None) -> str:
     text = pdf_text(data)
     with Session(engine) as s:
-        run = AgentRun(file_name=file_name, status="RUNNING" if text else "FAILED",
+        run = AgentRun(file_name=file_name, status="RUNNING" if text else "FAILED", demo_session_id=session_id,
                        question=None if text else "This PDF has no text layer (scanned image).")
         s.add(run)
         s.commit()

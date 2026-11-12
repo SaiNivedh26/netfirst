@@ -1,0 +1,34 @@
+[
+  {
+    "id": "01-marks-spencer-gbp",
+    "label": "Marks & Spencer: CHARGE",
+    "description": "New client, GBP to INR, FX line charged upfront",
+    "client": "Marks & Spencer",
+    "currency": "GBP",
+    "amount": "£465.82"
+  },
+  {
+    "id": "02-apple-green-gbp",
+    "label": "Apple Green Ltd: TRUE_UP",
+    "description": "Repeat client, GBP to INR, rate swing netted on payment",
+    "client": "Apple Green Ltd",
+    "currency": "GBP",
+    "amount": "£817.64"
+  },
+  {
+    "id": "03-eurotech-eur",
+    "label": "Eurotech GmbH: DEFER",
+    "description": "Loyal client, EUR to INR, FX carried to balance",
+    "client": "Eurotech GmbH",
+    "currency": "EUR",
+    "amount": "€1,200.00"
+  },
+  {
+    "id": "04-global-freight-usd",
+    "label": "Global Freight Co: Settlement",
+    "description": "Balance over cap, USD to INR, settlement follows",
+    "client": "Global Freight Co",
+    "currency": "USD",
+    "amount": "$2,100.00"
+  }
+]

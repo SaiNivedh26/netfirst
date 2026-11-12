@@ -11,7 +11,7 @@ from . import paypal
 from .config import env
 from .fx import Rate, balance, convert, fmt, invert, settlement_invoice, to_major, to_minor, true_up_base
 from .models import Client, Invoice, LedgerEntry, Proposal, WebhookEvent, get_settings, now
-from .rates import payment_day, quote
+from .rates import Quote, payment_day, quote
 
 
 # --- posting rules (pure) ---
@@ -27,7 +27,7 @@ def sent_entries(inv: Invoice, at: datetime | None = None) -> list[LedgerEntry]:
         rows.append(("FX_DEFER", inv.defer_base_minor, "FX cost carried to balance (DEFER)"))
     if inv.discount_minor:
         rows.append(("CREDIT_APPLIED", convert(inv.discount_minor, out, base, r), "FX credit applied as discount"))
-    return [LedgerEntry(client_id=inv.client_id, invoice_id=inv.id, type=t, amount_minor=a, note=n, created_at=at) for t, a, n in rows]
+    return [LedgerEntry(client_id=inv.client_id, invoice_id=inv.id, type=t, amount_minor=a, note=n, created_at=at, demo_session_id=inv.demo_session_id) for t, a, n in rows]
 
 
 def paid_entries(inv: Invoice, rate_paid: Rate, at: datetime | None = None) -> list[LedgerEntry]:
@@ -36,7 +36,7 @@ def paid_entries(inv: Invoice, rate_paid: Rate, at: datetime | None = None) -> l
     if inv.treatment != "CHARGE":
         swing = true_up_base(inv.output_base_minor - inv.discount_minor, out, base, r, paid)
         rows.append(("TRUE_UP", swing, f"Rate moved {r} → {paid}"))
-    return [LedgerEntry(client_id=inv.client_id, invoice_id=inv.id, type=t, amount_minor=a, note=n, created_at=at) for t, a, n in rows]
+    return [LedgerEntry(client_id=inv.client_id, invoice_id=inv.id, type=t, amount_minor=a, note=n, created_at=at, demo_session_id=inv.demo_session_id) for t, a, n in rows]
 
 
 # --- guardrails (pure) ---
@@ -79,10 +79,12 @@ def client_entries(s: Session, client_id: str) -> list[LedgerEntry]:
     return list(s.exec(select(LedgerEntry).where(LedgerEntry.client_id == client_id)).all())
 
 
-def new_client(s: Session, *, name: str, email: str, country: str, currency: str | None) -> Client:
+def new_client(s: Session, *, name: str, email: str, country: str, currency: str | None,
+               demo_session_id: str | None = None) -> Client:
     base = get_settings(s).base_currency
     c = Client(name=name, email=email, country=country, currency=currency,
-               cap_minor_base=to_minor(env.DEFAULT_CLIENT_CAP, base), settle_by_days=env.int("DEFAULT_SETTLE_BY_DAYS"))
+               cap_minor_base=to_minor(env.DEFAULT_CLIENT_CAP, base), settle_by_days=env.int("DEFAULT_SETTLE_BY_DAYS"),
+               demo_session_id=demo_session_id)
     s.add(c)
     s.commit()
     s.refresh(c)
@@ -102,7 +104,7 @@ def refresh_proposals(s: Session, client_id: str, quarter_end: bool = False, at:
             s.add(existing)
             s.commit()
         return None
-    p = existing or Proposal(client_id=client_id, kind="SETTLE", amount_minor=bal, reason="")
+    p = existing or Proposal(client_id=client_id, kind="SETTLE", amount_minor=bal, reason="", demo_session_id=client.demo_session_id)
     p.amount_minor = bal
     if why:
         p.reason = {
@@ -135,7 +137,7 @@ def approve_settle(s: Session, proposal_id: str) -> Invoice | None:
         client_id=client.id, description="FX statement settlement", source_minor=bal, source_currency=base,
         output_currency=out, base_currency=base, output_base_minor=amounts["output_base_minor"],
         fx_line_minor=amounts["gross_minor"] - amounts["output_base_minor"], treatment="CHARGE",
-        ai_reason=p.reason, rate_invoiced=str(q.rate), rate_source=q.source,
+        ai_reason=p.reason, rate_invoiced=str(q.rate), rate_source=q.source, demo_session_id=client.demo_session_id,
     )
     draft = paypal.create_draft(paypal.invoice_payload(
         currency=out, email=client.email,
@@ -145,17 +147,18 @@ def approve_settle(s: Session, proposal_id: str) -> Invoice | None:
     inv.paypal_invoice_id, inv.paypal_url, inv.status = draft["id"], paypal.send_and_get_link(draft["id"]), "SENT"
     p.status = "APPROVED"
     s.add_all([inv, p, *sent_entries(inv),
-               LedgerEntry(client_id=client.id, invoice_id=inv.id, type="SETTLEMENT", amount_minor=-bal, note=f"Settled {fmt(bal, base)} on {draft['id']}")])
+               LedgerEntry(client_id=client.id, invoice_id=inv.id, type="SETTLEMENT", amount_minor=-bal, note=f"Settled {fmt(bal, base)} on {draft['id']}",
+                          demo_session_id=client.demo_session_id)])
     s.commit()
     s.refresh(inv)
     return inv
 
 
-def on_invoice_paid(s: Session, paypal_invoice_id: str, at: datetime | None = None) -> Invoice | None:
+def on_invoice_paid(s: Session, paypal_invoice_id: str, at: datetime | None = None, paid_quote: Quote | None = None) -> Invoice | None:
     inv = s.exec(select(Invoice).where(Invoice.paypal_invoice_id == paypal_invoice_id)).first()
     if inv is None or inv.status == "PAID":
         return inv  # not a NetFirst invoice, or already handled
-    q, at = payment_day(inv.output_currency, inv.base_currency), at or now()
+    q, at = paid_quote or payment_day(inv.output_currency, inv.base_currency), at or now()
     inv.status, inv.paid_at, inv.rate_paid, inv.rate_paid_source = "PAID", at, str(q.rate), q.source
     s.add_all([inv, *paid_entries(inv, q.rate, at)])
     s.commit()

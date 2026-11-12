@@ -61,3 +61,15 @@ body {
   --color-pp-danger: var(--pp-danger);
   --font-paypal: var(--pp-font);
 }
+
+/* Row a NetFirst scenario points at */
+.ag-row.nf-focus-row { background-color: #fff6d6 !important; box-shadow: inset 3px 0 0 var(--pp-blue); font-weight: 600; }
+
+/* driver.js tour, matched to the NetFirst app */
+.driver-popover.nf-tour { max-width: 340px; padding: 18px 18px 14px; border-radius: 14px; border: 1px solid #e5e9f0; background: #fff; color: #0f172a; box-shadow: 0 20px 48px -16px rgba(11, 31, 77, 0.35); font-family: var(--pp-font); }
+.driver-popover.nf-tour .driver-popover-title { font-family: 'Anthropic Serif', Georgia, serif; font-size: 18px; font-weight: 700; color: #0b1f4d; }
+.driver-popover.nf-tour .driver-popover-description { margin-top: 6px; font-size: 13.5px; line-height: 1.55; color: #475569; }
+.driver-popover.nf-tour .driver-popover-footer { margin-top: 16px; align-items: center; }
+.driver-popover.nf-tour .driver-popover-progress-text { font-size: 12px; color: #94a3b8; }
+.driver-popover.nf-tour .driver-popover-footer button { text-shadow: none; border-radius: 999px; padding: 7px 14px; font-size: 13px; font-weight: 600; line-height: 1; border: 1px solid #e2e8f0; background: #fff; color: #334155; }
+.driver-popover.nf-tour .driver-popover-footer .driver-popover-next-btn { background: #0070ba; border-color: #0070ba; color: #fff; }
